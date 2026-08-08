@@ -1,0 +1,13 @@
+# How the controller (and the workers it creates) reach Temporal.
+#
+# The controller reads this to talk to the server, and injects TEMPORAL_ADDRESS
+# into every worker pod it creates from it. For Temporal Cloud you would add
+# `apiKeySecretRef` or `mutualTLSSecretRef` here; a local dev server needs no
+# credentials at all.
+apiVersion: temporal.io/v1alpha1
+kind: Connection
+metadata:
+  name: temporal-dev
+  namespace: temporal-demo
+spec:
+  hostPort: temporal.temporal-demo.svc.cluster.local:7233

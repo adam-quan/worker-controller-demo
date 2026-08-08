@@ -1,0 +1,105 @@
+# A single-pod Temporal dev server for the demo, backed by a PVC so that
+# Worker Deployment Version state survives pod restarts.
+#
+# This is NOT a production Temporal deployment. For anything real, use the
+# Temporal Helm chart or Temporal Cloud and point TEMPORAL_ADDRESS at it.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: temporal-demo
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: temporal-data
+  namespace: temporal-demo
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: temporal
+  namespace: temporal-demo
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate # single writer against one SQLite file
+  selector:
+    matchLabels:
+      app: temporal
+  template:
+    metadata:
+      labels:
+        app: temporal
+    spec:
+      securityContext:
+        fsGroup: 1000 # the `temporal` user in the image
+      containers:
+        - name: temporal
+          image: temporalio/temporal:latest
+          # ENTRYPOINT is already `temporal`, so these are just its arguments.
+          args:
+            - server
+            - start-dev
+            - --ip
+            - 0.0.0.0
+            - --port
+            - "7233"
+            - --ui-port
+            - "8233"
+            - --db-filename
+            - /data/temporal.db
+            - --log-level
+            - warn
+            # Demo-only: by default a version takes several minutes to report
+            # `drained` after its last pinned workflow closes. Shorten that so
+            # scripts/cleanup-drained.sh is observable in a live walkthrough.
+            # Leave these at their defaults in production.
+            - --dynamic-config-value
+            - 'matching.wv.VersionDrainageStatusRefreshInterval="30s"'
+            - --dynamic-config-value
+            - 'matching.wv.VersionDrainageStatusVisibilityGracePeriod="30s"'
+          ports:
+            - name: grpc
+              containerPort: 7233
+            - name: ui
+              containerPort: 8233
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            tcpSocket:
+              port: 7233
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: temporal-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: temporal
+  namespace: temporal-demo
+spec:
+  selector:
+    app: temporal
+  ports:
+    - name: grpc
+      port: 7233
+      targetPort: 7233
+    - name: ui
+      port: 8233
+      targetPort: 8233
+# Reaching the server from your laptop is done with `kubectl port-forward`
+# (see scripts/port-forward.sh). A NodePort would not help on minikube's
+# `docker` driver, where the node IP is not routable from the host.
