@@ -21,48 +21,77 @@ two together. Every output below is from a demo that actually runs
 
 Six things have to cooperate. Worth having the map before the details:
 
+<p align="center">
+  <img src="images/architecture.png"
+       alt="Architecture: GitHub repository and Actions workflow in the cloud; on your machine, a self-hosted runner and minikube. Inside minikube, the Temporal Worker Controller watches a WorkerDeployment resource and drives the Temporal server, which routes work to one set of worker pods per Build ID."
+       width="620">
+</p>
+
+<details>
+<summary>Diagram source (mermaid)</summary>
+
+Rendered to PNG so the background stays white in both light and dark themes —
+mermaid's `background` theme variable styles labels and tooltips, not the
+canvas, so an inline block would go transparent and pick up the reader's theme.
+Theme and spacing are embedded in each `.mmd`, so the sources render the same
+in any mermaid tool. Regenerate after editing
+[`images/architecture.mmd`](images/architecture.mmd):
+
+```bash
+npx -y @mermaid-js/mermaid-cli \
+  -i docs/images/architecture.mmd -o docs/images/architecture.png -b white -s 2
+```
+
 ```mermaid
-flowchart LR
+%%{init: {"theme":"base","themeVariables":{"background":"#ffffff","primaryColor":"#ffffff","primaryTextColor":"#1f2328","primaryBorderColor":"#8c959f","lineColor":"#57606a","secondaryColor":"#f6f8fa","tertiaryColor":"#ffffff","clusterBkg":"#f6f8fa","clusterBorder":"#d0d7de","edgeLabelBackground":"#ffffff","fontSize":"13px","arrowheadColor":"#57606a","titleColor":"#1f2328","nodeTextColor":"#1f2328","textColor":"#1f2328"},"flowchart":{"htmlLabels":true,"useMaxWidth":true,"diagramPadding":24,"nodeSpacing":45,"rankSpacing":55}}}%%
+flowchart TB
+
+    %% --- Cloud -----------------------------------------------------------
     subgraph GH["GitHub — cloud"]
+        direction LR
         REPO["Repository<br/>worker/ · k8s/"]
-        GHA["Actions workflow<br/>deploy-worker-version.yml"]
+        GHA["Actions workflow"]
     end
 
+    %% --- Local machine ---------------------------------------------------
+    %% Only two levels of nesting: the machine, and the cluster on it.
+    %% Namespaces are named in the node labels instead of nested further.
     subgraph LAPTOP["Your machine"]
         RUNNER["Self-hosted runner"]
 
         subgraph MK["minikube"]
-            IMG[("Local image store<br/>minikube docker-env")]
-
-            subgraph SYS["namespace: temporal-system"]
-                CTRL["Temporal Worker Controller"]
-            end
-
-            subgraph DEMO["namespace: temporal-demo"]
-                CR["WorkerDeployment CR<br/>rollout · gate · sunset policy"]
-                TS[("Temporal server<br/>event histories,<br/>version routing")]
-                W1["Worker pods<br/>build v1-fb6c"]
-                W2["Worker pods<br/>build v2-ddb6"]
-            end
+            IMG[("Local image store")]
+            CR["WorkerDeployment CR<br/>ns temporal-demo<br/>rollout · gate · sunset"]
+            CTRL["Temporal Worker Controller<br/>ns temporal-system"]
+            W["Worker pods<br/>one Deployment per Build ID<br/>v1-fb6c · v2-ddb6"]
+            TS[("Temporal server<br/>histories · routing")]
         end
     end
 
+    %% --- One path down the page: commit, apply, reconcile, run -----------
     REPO -->|"git push"| GHA
     GHA -->|"dispatches job"| RUNNER
     RUNNER -->|"docker build"| IMG
     RUNNER -->|"kubectl apply"| CR
+    CR -->|"watched by"| CTRL
+    CTRL -->|"creates one Deployment<br/>per Build ID"| W
+    CTRL -->|"sets Current, ramps,<br/>starts gate workflow"| TS
 
-    CTRL -->|"watches"| CR
-    CTRL -->|"creates one Deployment<br/>per Build ID"| W1
-    CTRL -->|"creates"| W2
-    CTRL -->|"registers version, sets Current,<br/>ramps, starts gate workflow"| TS
+    IMG -.->|"image"| W
+    W <-->|"each version polls<br/>its own task queue"| TS
 
-    IMG -.->|"image for"| W1
-    IMG -.->|"image for"| W2
+    %% --- Light palette, in plain diagram syntax --------------------------
+    classDef box fill:#ffffff,stroke:#8c959f,stroke-width:1px,color:#1f2328
+    class REPO,GHA,RUNNER,IMG,CR,CTRL,W,TS box
 
-    W1 <-->|"polls its own<br/>versioned task queue"| TS
-    W2 <-->|"polls"| TS
+    style GH fill:#f6f8fa,stroke:#d0d7de,color:#1f2328
+    style LAPTOP fill:#f6f8fa,stroke:#d0d7de,color:#1f2328
+    style MK fill:#ffffff,stroke:#d0d7de,color:#1f2328
+
+    linkStyle default stroke:#57606a,color:#1f2328
 ```
+
+</details>
 
 Reading it as a chain of custody: **GitHub** holds the code and decides *when*
 to deploy. The **self-hosted runner** is the only component that can see both
@@ -148,7 +177,17 @@ long-running executions pick up fixes without waiting for them to finish.
 Those two settings, plus the server's Current/Ramping pointers, are the whole
 routing model:
 
+<p align="center">
+  <img src="images/routing.png"
+       alt="Routing model: a new execution goes to the Current version, or to the Ramping version for its configured share. An execution already running branches on its workflow's versioning behavior — PINNED stays on the version that started it until it completes, AUTO_UPGRADE moves to Current. Once nothing is pinned to it, the old version is drained and safe to delete."
+       width="680">
+</p>
+
+<details>
+<summary>Diagram source (mermaid) — <a href="images/routing.mmd">images/routing.mmd</a></summary>
+
 ```mermaid
+%%{init: {"theme":"base","themeVariables":{"background":"#ffffff","primaryColor":"#ffffff","primaryTextColor":"#1f2328","primaryBorderColor":"#8c959f","lineColor":"#57606a","secondaryColor":"#f6f8fa","tertiaryColor":"#ffffff","clusterBkg":"#f6f8fa","clusterBorder":"#d0d7de","edgeLabelBackground":"#ffffff","fontSize":"13px","arrowheadColor":"#57606a","titleColor":"#1f2328","nodeTextColor":"#1f2328","textColor":"#1f2328"},"flowchart":{"htmlLabels":true,"useMaxWidth":true,"diagramPadding":24,"nodeSpacing":45,"rankSpacing":55}}}%%
 flowchart TD
     NEW(["A new execution starts"]) --> ROUTE{"Server routing"}
     ROUTE -->|"default"| CUR["Current version<br/>v2-ddb6"]
@@ -159,7 +198,14 @@ flowchart TD
     BEH -->|"AUTO_UPGRADE"| CUR
 
     OLDV -.->|"once no execution<br/>is pinned to it"| DRAIN["v1-fb6c drained<br/>safe to delete"]
+
+    %% --- Light palette, in plain diagram syntax --------------------------
+    classDef box fill:#ffffff,stroke:#8c959f,stroke-width:1px,color:#1f2328
+    class NEW,ROUTE,CUR,RAMP,OLD,BEH,OLDV,DRAIN box
+    linkStyle default stroke:#57606a,color:#1f2328
 ```
+
+</details>
 
 The dashed edge is the part that makes automation possible: "drained" is a
 state the server reports, so something else can watch for it and clean up. That
@@ -417,26 +463,40 @@ That is genuinely all the pipeline does. The image tag is the Git SHA, so
 "what code is version `v2-ddb6` running?" is answerable with `git show`.
 Everything else belongs to the controller:
 
+<p align="center">
+  <img src="images/pipeline.png"
+       alt="Pipeline: a push to main triggers GitHub Actions on the self-hosted runner, which builds the image and applies the WorkerDeployment. The controller then derives a Build ID, creates a Deployment, waits for workers to poll, and runs the gate workflow. If the gate fails the old version stays Current with zero traffic to the new build; if it passes, traffic ramps to 10% then 50%, the version is promoted to Current, and drained versions are sunset."
+       width="560">
+</p>
+
+<details>
+<summary>Diagram source (mermaid) — <a href="images/pipeline.mmd">images/pipeline.mmd</a></summary>
+
 ```mermaid
-flowchart TD
-    A(["git push to main"]) --> B["GitHub Actions<br/>on the self-hosted runner"]
-    B --> C["docker build<br/>tag = git SHA"]
-    C --> D["kubectl apply<br/>the WorkerDeployment"]
+%%{init: {"theme":"base","themeVariables":{"background":"#ffffff","primaryColor":"#ffffff","primaryTextColor":"#1f2328","primaryBorderColor":"#8c959f","lineColor":"#57606a","secondaryColor":"#f6f8fa","tertiaryColor":"#ffffff","clusterBkg":"#f6f8fa","clusterBorder":"#d0d7de","edgeLabelBackground":"#ffffff","fontSize":"13px","arrowheadColor":"#57606a","titleColor":"#1f2328","nodeTextColor":"#1f2328","textColor":"#1f2328"},"flowchart":{"htmlLabels":true,"useMaxWidth":true,"diagramPadding":24,"nodeSpacing":45,"rankSpacing":55}}}%%
+flowchart TB
+    A(["git push to main"]) --> B["GitHub Actions on the<br/>self-hosted runner<br/>docker build · tag = git SHA"]
+    B --> D["kubectl apply<br/>the WorkerDeployment"]
 
     subgraph CTRL["Handed off to the controller"]
-        F["Derive Build ID<br/>image + pod template hash"]
-        F --> G["Create a Deployment<br/>for this version only"]
-        G --> H["Wait for its workers to poll"]
-        H --> I["Run gate workflow<br/>pinned to the new Build ID"]
-        I --> Q{"Gate passed?"}
+        F["Derive Build ID, create a<br/>Deployment for this version only"]
+        F --> H["Wait for workers to poll, then run<br/>the gate workflow, pinned<br/>to the new Build ID"]
+        H --> Q{"Gate passed?"}
         Q -->|"no"| J["Stop. Old version stays Current,<br/>zero traffic to the new build"]
-        Q -->|"yes"| K["Ramp to 10%, then 50%"]
-        K --> L["Promote to Current"]
-        L --> M["Sunset drained versions:<br/>scale to zero, then delete"]
+        Q -->|"yes"| K["Ramp to 10%, then 50%,<br/>then promote to Current"]
+        K --> M["Sunset drained versions:<br/>scale to zero, then delete"]
     end
 
     D --> F
+
+    %% --- Light palette, in plain diagram syntax --------------------------
+    classDef box fill:#ffffff,stroke:#8c959f,stroke-width:1px,color:#1f2328
+    class A,B,D,F,H,Q,J,K,M box
+    style CTRL fill:#f6f8fa,stroke:#d0d7de,color:#1f2328
+    linkStyle default stroke:#57606a,color:#1f2328
 ```
+
+</details>
 
 The division of labour is the point. CI does what CI is good at — turning a
 commit into an artifact and recording intent. The controller does what a
