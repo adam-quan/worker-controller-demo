@@ -26,9 +26,9 @@ spec:
     strategy: Progressive
     steps:
       - rampPercentage: 10
-        pauseDuration: 60s
+        pauseDuration: 30s
       - rampPercentage: 50
-        pauseDuration: 60s
+        pauseDuration: 30s
 
   sunset:
     # Both delays are measured from the moment a version reports `drained`,
