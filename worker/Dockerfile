@@ -8,7 +8,7 @@ ENV PYTHONUNBUFFERED=1
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN python3 -m pip install --no-cache-dir -r requirements.txt
 
 COPY activities.py workflows.py run_worker.py starter.py ./
 
@@ -20,4 +20,4 @@ USER worker
 # treats a version as healthy only once this passes.
 EXPOSE 8080
 
-CMD ["python", "run_worker.py"]
+CMD ["python3", "run_worker.py"]

@@ -1,10 +1,10 @@
 """Start workflows against the demo task queue.
 
 Usage:
-    python starter.py greeting  <name>      # PINNED, long-running
-    python starter.py health                # AUTO_UPGRADE, polls for ~5 min
-    python starter.py approve  <workflow-id> # release a parked greeting run
-    python starter.py status   <workflow-id>
+    python3 starter.py greeting  <name>      # PINNED, long-running
+    python3 starter.py health                # AUTO_UPGRADE, polls for ~5 min
+    python3 starter.py approve  <workflow-id> # release a parked greeting run
+    python3 starter.py status   <workflow-id>
 """
 
 import asyncio
@@ -36,7 +36,7 @@ async def main() -> None:
         )
         print(f"started {handle.id}")
         print(f"  it is now parked on a signal. Deploy a new version, then run:")
-        print(f"    python starter.py approve {handle.id}")
+        print(f"    python3 starter.py approve {handle.id}")
 
     elif command == "health":
         handle = await client.start_workflow(

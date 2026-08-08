@@ -129,7 +129,7 @@ Then, in a second terminal, leave this running — Web UI on
 
 ```bash
 ./scripts/port-forward.sh
-pip install -r worker/requirements.txt
+python3 -m pip install -r worker/requirements.txt
 ```
 
 > Use `port-forward`, not `minikube service --url`: on minikube's `docker`
@@ -141,7 +141,7 @@ pip install -r worker/requirements.txt
 **1. Start a long-running workflow.** It greets, then parks on a signal.
 
 ```bash
-cd worker && python starter.py greeting Alice
+cd worker && python3 starter.py greeting Alice
 # started greeting-582cadfb
 ```
 
@@ -177,7 +177,7 @@ rollout complete: v2-ddb6 is Current
 A *new* workflow gets the new code:
 
 ```bash
-python starter.py greeting Bob
+python3 starter.py greeting Bob
 #   progress: ['Howdy, Bob! (served by build v2-ddb6)']
 ```
 
@@ -185,7 +185,7 @@ The *old* workflow, still parked, finishes on the version it started on — old
 greeting, old build — even though v2 is now Current:
 
 ```bash
-python starter.py approve greeting-582cadfb
+python3 starter.py approve greeting-582cadfb
 # result: {'greeting': 'Hello, Alice! (served by build v1-fb6c)', 'recorded_by': 'v1-fb6c'}
 ```
 
