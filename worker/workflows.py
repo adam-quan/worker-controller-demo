@@ -28,7 +28,8 @@ with workflow.unsafe.imports_passed_through():
 
 # ---------------------------------------------------------------------------
 # Edit me to produce a new workflow version, then `git push`.
-GREETING = "Hello"
+#GREETING = "Hello"
+GREETING = "Howdy"
 # ---------------------------------------------------------------------------
 
 
