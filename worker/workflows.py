@@ -6,32 +6,25 @@ and points the WorkerDeployment resource at it. The Temporal Worker Controller
 notices the change and rolls out a *new* Worker Deployment Version in minikube
 -- without disturbing runs already in flight.
 
-Two workflows, two versioning behaviors:
-
-* ``GreetingWorkflow`` is PINNED. A run that started on Build ID ``abc1234``
-  keeps executing on ``abc1234`` for its entire life, even after a newer
-  version becomes Current. Safe for workflows whose code you change
-  incompatibly.
-* ``HealthCheckWorkflow`` is AUTO_UPGRADE. In-flight runs move to whatever
-  version is Current at their next workflow task. Safe for workflows you only
-  ever change in compatible ways.
+``GreetingWorkflow`` is PINNED: a run that started on Build ID ``abc1234``
+keeps executing on ``abc1234`` for its entire life, even after a newer version
+becomes Current. That is what makes it safe to change this file however you
+like. The alternative behavior, ``AUTO_UPGRADE``, moves in-flight runs to
+whatever version is Current at their next workflow task, and is only safe for
+workflows you change compatibly.
 """
 
 from datetime import timedelta
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy, VersioningBehavior
-from temporalio.exceptions import ApplicationError
 
 with workflow.unsafe.imports_passed_through():
     from activities import compose_greeting, record_result
 
 # ---------------------------------------------------------------------------
 # Edit me to produce a new workflow version, then `git push`.
-#GREETING = "Hello"
-#GREETING = "Howdy"
 GREETING = "你好"
-#GREETING = "Bonjour"
 # ---------------------------------------------------------------------------
 
 
@@ -79,50 +72,3 @@ class GreetingWorkflow:
     @workflow.query
     def progress(self) -> list[str]:
         return self._log
-
-
-@workflow.defn(versioning_behavior=VersioningBehavior.PINNED)
-class RolloutGate:
-    """Smoke test that decides whether a new version is allowed to take traffic.
-
-    The controller starts this workflow type once per task queue as soon as a
-    new version's pods are healthy, pinned to that new Build ID -- so it runs
-    on the new code specifically. No traffic is ramped until it completes
-    successfully; if it fails, the rollout stops with the old version still
-    Current.
-
-    Keep it fast and representative: exercise the paths a real execution would
-    take. Anything raised here blocks the rollout.
-    """
-
-    @workflow.run
-    async def run(self) -> str:
-        greeting = await workflow.execute_activity(
-            compose_greeting,
-            args=[GREETING, "rollout-gate"],
-            start_to_close_timeout=timedelta(seconds=10),
-            # Fail fast: this is a gate, not a workload worth retrying for long.
-            retry_policy=RetryPolicy(maximum_attempts=2),
-        )
-        if not greeting or "rollout-gate" not in greeting:
-            raise ApplicationError(f"gate failed: unexpected greeting {greeting!r}")
-        return greeting
-
-
-@workflow.defn(versioning_behavior=VersioningBehavior.AUTO_UPGRADE)
-class HealthCheckWorkflow:
-    """A short poll loop that follows the Current version as it changes."""
-
-    @workflow.run
-    async def run(self, iterations: int = 20) -> list[str]:
-        results: list[str] = []
-        for i in range(iterations):
-            results.append(
-                await workflow.execute_activity(
-                    compose_greeting,
-                    args=[f"{GREETING} (check {i + 1})", "health"],
-                    start_to_close_timeout=timedelta(seconds=10),
-                )
-            )
-            await workflow.sleep(timedelta(seconds=15))
-        return results

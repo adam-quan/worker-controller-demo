@@ -1,8 +1,7 @@
 """Start workflows against the demo task queue.
 
 Usage:
-    python3 starter.py greeting  <name>      # PINNED, long-running
-    python3 starter.py health                # AUTO_UPGRADE, polls for ~5 min
+    python3 starter.py greeting  <name>       # PINNED, long-running
     python3 starter.py approve  <workflow-id> # release a parked greeting run
     python3 starter.py status   <workflow-id>
 """
@@ -14,7 +13,7 @@ import uuid
 
 from temporalio.client import Client
 
-from workflows import GreetingWorkflow, HealthCheckWorkflow
+from workflows import GreetingWorkflow
 
 TEMPORAL_ADDRESS = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
 TEMPORAL_NAMESPACE = os.environ.get("TEMPORAL_NAMESPACE", "default")
@@ -38,14 +37,6 @@ async def main() -> None:
         print(f"  it is now parked on a signal. Deploy a new version, then run:")
         print(f"    python3 starter.py approve {handle.id}")
 
-    elif command == "health":
-        handle = await client.start_workflow(
-            HealthCheckWorkflow.run,
-            20,
-            id=f"health-{uuid.uuid4().hex[:8]}",
-            task_queue=TASK_QUEUE,
-        )
-        print(f"started {handle.id}")
 
     elif command == "approve":
         handle = client.get_workflow_handle(sys.argv[2])

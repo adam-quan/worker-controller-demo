@@ -5,9 +5,9 @@
 #   scripts/deploy.sh [image-tag]     (default: short Git SHA)
 #
 # That is the entire deployment. Everything after `kubectl apply` -- deriving a
-# Build ID, creating a versioned Deployment, waiting for pollers, running the
-# gate workflow, ramping traffic, promoting to Current, sunsetting the old
-# version -- is done by the Temporal Worker Controller, not by this script.
+# Build ID, creating a versioned Deployment, waiting for pollers, ramping
+# traffic, promoting to Current, sunsetting the old version -- is done by the
+# Temporal Worker Controller, not by this script.
 #
 # The rest of the file is just waiting for the controller and reporting what it
 # did, so that CI fails when a rollout does.
@@ -54,13 +54,12 @@ while true; do
   if (( SECONDS > deadline )); then
     echo
     echo "ERROR: rollout did not complete within ${TIMEOUT}s." >&2
-    echo "A stalled rollout usually means the gate workflow failed or the new" >&2
-    echo "pods never became ready. Conditions:" >&2
+    echo "A stalled rollout usually means the new pods never became ready." >&2
+    echo "Conditions:" >&2
     wd -o jsonpath='{range .status.conditions[*]}  {.type}={.status} {.reason}: {.message}{"\n"}{end}' >&2
     echo >&2
-    echo "Gate workflow executions (look for a failed RolloutGate):" >&2
-    kubectl exec -n "$NAMESPACE" deploy/temporal -- temporal --address localhost:7233 \
-      workflow list --query "WorkflowType='RolloutGate'" 2>/dev/null | head -10 >&2 || true
+    echo "Worker pods for the target version:" >&2
+    kubectl get pods -n "$NAMESPACE" -l "temporal.io/deployment-name=${WD_NAME}" >&2 || true
     exit 1
   fi
   sleep 5

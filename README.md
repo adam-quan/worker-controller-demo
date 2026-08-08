@@ -24,7 +24,6 @@ That's it. Everything after that is the controller's job, driven by the
 | Derive a Build ID | Controller (image ref + pod template hash) |
 | Create a Deployment for the new version | Controller |
 | Wait for its workers to poll | Controller |
-| Run a smoke test on the new version | Controller (gate workflow) |
 | Ramp traffic 10% → 50% → 100% | Controller |
 | Promote to Current | Controller |
 | Scale down and delete drained versions | Controller |
@@ -40,7 +39,7 @@ how you deploy is a reviewable change to
 | [worker/workflows.py](worker/workflows.py) | The workflows. **Edit this to trigger the demo.** |
 | [worker/run_worker.py](worker/run_worker.py) | Worker entrypoint — reads its identity from the controller |
 | [worker/starter.py](worker/starter.py) | CLI to start / signal / inspect workflows |
-| [k8s/workerdeployment.template.yaml](k8s/workerdeployment.template.yaml) | **The rollout policy.** Steps, gate, sunset, pod template |
+| [k8s/workerdeployment.template.yaml](k8s/workerdeployment.template.yaml) | **The rollout policy.** Ramp steps, sunset, pod template |
 | [k8s/connection.yaml](k8s/connection.yaml) | How to reach Temporal |
 | [k8s/temporal-server.yaml](k8s/temporal-server.yaml) | A Temporal dev server for minikube |
 | [scripts/bootstrap.sh](scripts/bootstrap.sh) | minikube + cert-manager + controller + server |
@@ -59,7 +58,7 @@ The worker declares nothing about *which* version it is. The controller injects
 worker = Worker(
     client,
     task_queue=TASK_QUEUE,
-    workflows=[GreetingWorkflow, HealthCheckWorkflow, RolloutGate],
+    workflows=[GreetingWorkflow],
     activities=[compose_greeting, record_result],
     deployment_config=WorkerDeploymentConfig(
         version=WorkerDeploymentVersion(
@@ -80,20 +79,17 @@ version becomes Current:
 ```python
 @workflow.defn(versioning_behavior=VersioningBehavior.PINNED)
 class GreetingWorkflow: ...        # stays on its original version, forever
-
-@workflow.defn(versioning_behavior=VersioningBehavior.AUTO_UPGRADE)
-class HealthCheckWorkflow: ...     # moves to the new Current version
 ```
 
 `PINNED` is the safe default: you can change the workflow's code however you
-like, because runs in flight never see the change. `AUTO_UPGRADE` is for
-workflows you only ever change in [deterministically compatible](https://docs.temporal.io/workflow-definition#deterministic-constraints)
-ways.
+like, because runs in flight never see the change. The alternative,
+`AUTO_UPGRADE`, moves in-flight runs onto the new Current version and is only
+safe for workflows you change in [deterministically compatible](https://docs.temporal.io/workflow-definition#deterministic-constraints)
+ways. This demo uses `PINNED` throughout.
 
-### The gate workflow
+### How traffic shifts
 
-Before *any* traffic moves, the controller starts `RolloutGate` — once per task
-queue, **pinned to the new Build ID**, so it runs on the new code specifically:
+The rollout policy is the whole of `spec.rollout`:
 
 ```yaml
 rollout:
@@ -103,13 +99,11 @@ rollout:
       pauseDuration: 60s
     - rampPercentage: 50
       pauseDuration: 60s
-  gate:
-    workflowType: RolloutGate
 ```
 
-If the gate fails, ramping never starts and the old version stays Current — the
-bad build takes **zero** real traffic. Keep the gate fast and representative;
-anything it raises blocks the rollout.
+The controller only starts ramping once the new version's pods are ready and
+its workers are polling; until then the old version keeps 100% of new
+executions.
 
 ## Prerequisites
 
@@ -183,7 +177,7 @@ controller work:
 
 ```
 target=v2-ddb6 current=v1-fb6c ramp=0%  (WaitingForPollers)
-target=v2-ddb6 current=v1-fb6c ramp=0%  (WaitingForPromotion)   <- gate running
+target=v2-ddb6 current=v1-fb6c ramp=0%  (WaitingForPromotion)
 target=v2-ddb6 current=v1-fb6c ramp=10% (Ramping)
 target=v2-ddb6 current=v1-fb6c ramp=50% (Ramping)
 rollout complete: v2-ddb6 is Current
@@ -217,25 +211,25 @@ up the new code mid-execution and risked a non-determinism error.
 to `v1-fb6c` any more; Temporal reports it drained and the controller scales it
 to zero and deletes it, per `spec.sunset`.
 
-### Watch a bad version get blocked
+### Rolling back
 
-Break something the gate exercises — say, make `compose_greeting` raise — and
-deploy it:
+Re-deploy a previously built image tag:
 
 ```bash
-./scripts/deploy.sh v3
+./scripts/deploy.sh v1
 ```
 
-The rollout stalls at `WaitingForPromotion`, `deploy.sh` exits non-zero, and:
+The controller recognises a return to a known-good version as a rollback and
+applies it at once rather than ramping through the steps again. Executions
+already running on the bad version stay there — they are PINNED — so its pods
+remain until they drain.
 
-```
-Failed     test-.../greeting-worker:v3-9965-greeting-tq  RolloutGate
-```
-
-`CURRENT` stays on the good version while `TARGET` sits at the broken one, and
-new executions keep going to the good version. Recover by shipping a fix, or by
-re-deploying the previous image (`./scripts/deploy.sh v2`) — the controller
-treats a return to a known-good version as a rollback and applies it at once.
+Note what this demo does **not** do: nothing inspects the new code before
+traffic reaches it. Once the new pods are ready and polling, ramping begins.
+If you want a broken build stopped before any execution touches it, the
+controller supports a gate workflow (`spec.rollout.gate`) that must complete
+successfully on the new Build ID before ramping starts — see the
+[controller docs](https://github.com/temporalio/temporal-worker-controller).
 
 ## Running this for real
 

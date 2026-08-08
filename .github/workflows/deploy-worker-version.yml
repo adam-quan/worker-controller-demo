@@ -4,7 +4,7 @@ name: Deploy Worker Version
 #
 # Note how little this pipeline does: it builds an image and points the
 # WorkerDeployment resource at it. The Temporal Worker Controller handles the
-# rollout itself -- gate workflow, traffic ramping, promotion and sunsetting.
+# rollout itself -- traffic ramping, promotion and sunsetting.
 # The rollout *policy* lives in k8s/workerdeployment.template.yaml, not here,
 # so changing how you deploy is a reviewable change to a manifest.
 on:

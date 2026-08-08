@@ -1,10 +1,10 @@
 # The whole deployment policy, as one declarative object.
 #
-# This replaces the promote/ramp/health-check/cleanup scripting entirely. CI
+# This replaces the promote/ramp/cleanup scripting entirely. CI
 # changes exactly one thing in here -- the image tag -- and the controller does
 # the rest: derives a Build ID, creates a versioned Deployment for it, waits for
-# it to poll, runs the gate workflow on it, ramps traffic through the steps
-# below, promotes it to Current, and eventually sunsets the old version.
+# it to poll, ramps traffic through the steps below, promotes it to Current,
+# and eventually sunsets the old version.
 #
 # Rendered by scripts/deploy.sh with envsubst (only ${IMAGE} varies).
 apiVersion: temporal.io/v1alpha1
@@ -29,12 +29,6 @@ spec:
         pauseDuration: 60s
       - rampPercentage: 50
         pauseDuration: 60s
-    # Before ANY traffic is ramped, the controller runs this workflow type once
-    # per task queue, pinned to the new Build ID. It only starts ramping if the
-    # gate completes successfully -- so a broken version is caught by a smoke
-    # test on the real workers rather than by real user traffic.
-    gate:
-      workflowType: RolloutGate
 
   sunset:
     # Both delays are measured from the moment a version reports `drained`,

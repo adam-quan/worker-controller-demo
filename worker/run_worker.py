@@ -25,7 +25,7 @@ from temporalio.common import WorkerDeploymentVersion
 from temporalio.worker import Worker, WorkerDeploymentConfig
 
 from activities import compose_greeting, record_result
-from workflows import GreetingWorkflow, HealthCheckWorkflow, RolloutGate
+from workflows import GreetingWorkflow
 
 TEMPORAL_ADDRESS = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
 TEMPORAL_NAMESPACE = os.environ.get("TEMPORAL_NAMESPACE", "default")
@@ -40,7 +40,7 @@ async def start_health_server() -> asyncio.AbstractServer:
 
     The controller only considers a version healthy once its pods are ready, so
     this is deliberately started *after* the worker is polling: it is the signal
-    that gates the whole rollout.
+    the controller waits on before shifting any traffic.
     """
 
     async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -78,7 +78,7 @@ async def main() -> None:
     worker = Worker(
         client,
         task_queue=TASK_QUEUE,
-        workflows=[GreetingWorkflow, HealthCheckWorkflow, RolloutGate],
+        workflows=[GreetingWorkflow],
         activities=[compose_greeting, record_result],
         deployment_config=WorkerDeploymentConfig(
             version=WorkerDeploymentVersion(

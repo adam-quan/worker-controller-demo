@@ -61,7 +61,7 @@ flowchart TB
 
         subgraph MK["minikube"]
             IMG[("Local image store")]
-            CR["WorkerDeployment CR<br/>ns temporal-demo<br/>rollout · gate · sunset"]
+            CR["WorkerDeployment CR<br/>ns temporal-demo<br/>rollout · sunset"]
             CTRL["Temporal Worker Controller<br/>ns temporal-system"]
             W["Worker pods<br/>one Deployment per Build ID<br/>v1-fb6c · v2-ddb6"]
             TS[("Temporal server<br/>histories · routing")]
@@ -75,7 +75,7 @@ flowchart TB
     RUNNER -->|"kubectl apply"| CR
     CR -->|"watched by"| CTRL
     CTRL -->|"creates one Deployment<br/>per Build ID"| W
-    CTRL -->|"sets Current, ramps,<br/>starts gate workflow"| TS
+    CTRL -->|"sets Current<br/>and ramps traffic"| TS
 
     IMG -.->|"image"| W
     W <-->|"each version polls<br/>its own task queue"| TS
@@ -145,7 +145,7 @@ In the Python SDK, that registration is a few lines:
 worker = Worker(
     client,
     task_queue=TASK_QUEUE,
-    workflows=[GreetingWorkflow, HealthCheckWorkflow, RolloutGate],
+    workflows=[GreetingWorkflow],
     activities=[compose_greeting, record_result],
     deployment_config=WorkerDeploymentConfig(
         version=WorkerDeploymentVersion(
@@ -165,7 +165,7 @@ already in flight when a newer version becomes Current?
 class GreetingWorkflow: ...        # stays on its original version, forever
 
 @workflow.defn(versioning_behavior=VersioningBehavior.AUTO_UPGRADE)
-class HealthCheckWorkflow: ...     # moves to the new Current version
+class SomeCompatibleWorkflow: ...  # moves to the new Current version
 ```
 
 `PINNED` is the safe default: the execution finishes on the code that started
@@ -293,8 +293,6 @@ spec:
         pauseDuration: 60s
       - rampPercentage: 50
         pauseDuration: 60s
-    gate:
-      workflowType: RolloutGate
 
   sunset:
     scaledownDelay: 0s
@@ -325,49 +323,6 @@ Everything my scripts did is now in that one object. The controller:
 - **Sunsets drained versions** according to `sunset` — scaling to zero and
   deleting once Temporal reports no execution is pinned to them any more. The
   garbage collection I had written by hand is a two-field policy.
-
-### The gate workflow
-
-The feature I would not want to give back is `rollout.gate`. Before *any*
-traffic shifts, the controller starts the named workflow type — once per task
-queue, **pinned to the candidate Build ID**, so it executes on the new code
-specifically:
-
-```python
-@workflow.defn(versioning_behavior=VersioningBehavior.PINNED)
-class RolloutGate:
-    @workflow.run
-    async def run(self) -> str:
-        greeting = await workflow.execute_activity(
-            compose_greeting, args=[GREETING, "rollout-gate"],
-            start_to_close_timeout=timedelta(seconds=10),
-            retry_policy=RetryPolicy(maximum_attempts=2),
-        )
-        if not greeting or "rollout-gate" not in greeting:
-            raise ApplicationError(f"gate failed: unexpected greeting {greeting!r}")
-        return greeting
-```
-
-If the gate fails, ramping never begins. That is a meaningful difference from
-the health check I had written, which counted failed executions *after* routing
-real traffic to the new version. The gate is a smoke test on production workers
-that costs zero real executions.
-
-Here is a deliberately broken build (`compose_greeting` raises) attempting to
-deploy:
-
-```
-target=v3-9965 current=v2-ddb6 ramp=0% (WaitingForPollers)
-target=v3-9965 current=v2-ddb6 ramp=0% (WaitingForPromotion)
-ERROR: rollout did not complete within 150s.
-
-Gate workflow executions (look for a failed RolloutGate):
-  Failed     test-temporal-demo/greeting-worker:v3-9965-greeting-tq  RolloutGate
-  Completed  test-temporal-demo/greeting-worker:v2-ddb6-greeting-tq  RolloutGate
-```
-
-`CURRENT` stayed on `v2-ddb6`. The broken version registered, was smoke-tested,
-failed, and was never given a single execution.
 
 ---
 
@@ -465,8 +420,8 @@ Everything else belongs to the controller:
 
 <p align="center">
   <img src="images/pipeline.png"
-       alt="Pipeline: a push to main triggers GitHub Actions on the self-hosted runner, which builds the image and applies the WorkerDeployment. The controller then derives a Build ID, creates a Deployment, waits for workers to poll, and runs the gate workflow. If the gate fails the old version stays Current with zero traffic to the new build; if it passes, traffic ramps to 10% then 50%, the version is promoted to Current, and drained versions are sunset."
-       width="560">
+       alt="Pipeline: a push to main triggers GitHub Actions on the self-hosted runner, which builds the image and applies the WorkerDeployment. The controller then derives a Build ID, creates a Deployment, and waits for its workers to poll; traffic then ramps to 10% then 50%, the version is promoted to Current, and drained versions are sunset."
+       width="380">
 </p>
 
 <details>
@@ -480,10 +435,8 @@ flowchart TB
 
     subgraph CTRL["Handed off to the controller"]
         F["Derive Build ID, create a<br/>Deployment for this version only"]
-        F --> H["Wait for workers to poll, then run<br/>the gate workflow, pinned<br/>to the new Build ID"]
-        H --> Q{"Gate passed?"}
-        Q -->|"no"| J["Stop. Old version stays Current,<br/>zero traffic to the new build"]
-        Q -->|"yes"| K["Ramp to 10%, then 50%,<br/>then promote to Current"]
+        F --> H["Wait for its workers to poll"]
+        H --> K["Ramp to 10%, then 50%,<br/>then promote to Current"]
         K --> M["Sunset drained versions:<br/>scale to zero, then delete"]
     end
 
@@ -491,7 +444,7 @@ flowchart TB
 
     %% --- Light palette, in plain diagram syntax --------------------------
     classDef box fill:#ffffff,stroke:#8c959f,stroke-width:1px,color:#1f2328
-    class A,B,D,F,H,Q,J,K,M box
+    class A,B,D,F,H,K,M box
     style CTRL fill:#f6f8fa,stroke:#d0d7de,color:#1f2328
     linkStyle default stroke:#57606a,color:#1f2328
 ```
@@ -510,7 +463,7 @@ A real rollout, as the pipeline reports it:
 ==> Pointing WorkerDeployment/greeting-worker at worker-versioning-demo:v2
 ==> Waiting for the controller to roll out the new version
     target=v2-ddb6 current=v1-fb6c ramp=0%  (WaitingForPollers)
-    target=v2-ddb6 current=v1-fb6c ramp=0%  (WaitingForPromotion)   <- gate running
+    target=v2-ddb6 current=v1-fb6c ramp=0%  (WaitingForPromotion)
     target=v2-ddb6 current=v1-fb6c ramp=10% (Ramping)
     target=v2-ddb6 current=v1-fb6c ramp=50% (Ramping)
     rollout complete: v2-ddb6 is Current
@@ -535,9 +488,9 @@ thing that costs an afternoon:
   while it still has *active pollers*. Expect `Terminating` for several minutes
   after the pods stop. Scaling the versioned Deployments to zero first speeds
   it up considerably.
-- **The rollout policy belongs in the manifest, not the pipeline.** Ramp steps,
-  pause durations and the gate live in the `WorkerDeployment`, which means
-  changing how you deploy is a reviewable diff rather than an edit to CI YAML.
+- **The rollout policy belongs in the manifest, not the pipeline.** Ramp steps
+  and pause durations live in the `WorkerDeployment`, which means changing how
+  you deploy is a reviewable diff rather than an edit to CI YAML.
 - **Prerequisites are real**: Temporal Server 1.29.1+, and cert-manager for the
   controller's webhook TLS.
 
@@ -552,7 +505,7 @@ orphaned work. Three pieces solve it cleanly, each doing one job:
 | Layer | Responsibility |
 |---|---|
 | **Worker Versioning** | Runs multiple code versions side by side and routes each execution to the version that owns it. `PINNED` workflows finish where they started; `AUTO_UPGRADE` workflows follow the Current version. |
-| **Worker Controller** | Turns that into declarative Kubernetes. Derives Build IDs, creates a Deployment per version, gates on a smoke-test workflow, ramps traffic, promotes, and garbage-collects drained versions. |
+| **Worker Controller** | Turns that into declarative Kubernetes. Derives Build IDs, creates a Deployment per version, ramps traffic, promotes, and garbage-collects drained versions. |
 | **GitHub Actions** | Turns a commit into an image and records intent by updating one field. A self-hosted runner is only needed when the cluster is not publicly reachable. |
 
 What I would take away from building it twice — once by hand, once with the
@@ -561,11 +514,13 @@ controller:
 1. **The hard part is not ramping traffic, it is knowing when to stop.**
    Draining, sunsetting and rollback are where bespoke scripts get subtly
    wrong. Those are exactly the parts a control loop should own.
-2. **Gate workflows are the highest-value feature.** Validating a build *on the
-   real workers, before any real execution touches it*, is strictly better than
-   detecting failures after routing traffic.
-3. **Keep policy declarative.** When ramp steps and gates live in a manifest,
-   your deployment strategy gets code review, history, and rollback for free.
+2. **Keep policy declarative.** When ramp steps and pause durations live in a
+   manifest, your deployment strategy gets code review, history, and rollback
+   for free.
+3. **Validate before you ramp.** This demo shifts traffic as soon as the new
+   pods are healthy, which only proves the process started. The controller can
+   also run a gate workflow pinned to the candidate Build ID and refuse to ramp
+   until it passes — worth adding before you trust this in production.
 4. **Pin by default.** `PINNED` costs you some old pods for a while and buys
    the freedom to change workflow code without thinking about replay. That is
    almost always the right trade.
