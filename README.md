@@ -114,8 +114,8 @@ anything it raises blocks the rollout.
 ## Prerequisites
 
 `minikube`, `kubectl`, `docker`, `helm`, `envsubst` (`brew install gettext`),
-and Python 3.9+. Temporal Server 1.29.1+ is required by the controller; the
-bundled dev server is newer.
+and Python 3.9+ with `venv`. Temporal Server 1.29.1+ is required by the
+controller; the bundled dev server is newer.
 
 ## Quickstart
 
@@ -129,18 +129,39 @@ Then, in a second terminal, leave this running — Web UI on
 
 ```bash
 ./scripts/port-forward.sh
-python3 -m pip install -r worker/requirements.txt
 ```
 
 > Use `port-forward`, not `minikube service --url`: on minikube's `docker`
 > driver the node IP isn't routable from the host, and `minikube service`
 > blocks holding a tunnel open.
 
+In a third terminal, create a virtualenv for the client-side tools:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install -r worker/requirements.txt
+```
+
+Everything below assumes that virtualenv is active — run
+`source .venv/bin/activate` again in any new shell. Only
+[worker/starter.py](worker/starter.py) needs it; `bootstrap.sh`,
+`deploy.sh` and `status.sh` use the standard library alone.
+
+> Installing without a virtualenv fails with `error:
+> externally-managed-environment` on Homebrew and Debian Python. That is
+> [PEP 668](https://peps.python.org/pep-0668/) — the interpreter refusing to
+> let you install into the one your OS manages — not a problem with this
+> project. The virtualenv is the fix. (Inside the worker image there is no
+> such restriction, so [worker/Dockerfile](worker/Dockerfile) installs
+> directly.)
+
 ## The demo
 
 **1. Start a long-running workflow.** It greets, then parks on a signal.
 
 ```bash
+source .venv/bin/activate      # if not already active
 cd worker && python3 starter.py greeting Alice
 # started greeting-582cadfb
 ```
