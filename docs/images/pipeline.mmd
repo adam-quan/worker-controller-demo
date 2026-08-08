@@ -1,0 +1,23 @@
+%% CI-to-rollout pipeline for the Temporal worker versioning demo.
+%% Regenerate the PNG with:
+%%   npx -y @mermaid-js/mermaid-cli \
+%%     -i docs/images/pipeline.mmd -o docs/images/pipeline.png -b white -s 2
+%%{init: {"theme":"base","themeVariables":{"background":"#ffffff","primaryColor":"#ffffff","primaryTextColor":"#1f2328","primaryBorderColor":"#8c959f","lineColor":"#57606a","secondaryColor":"#f6f8fa","tertiaryColor":"#ffffff","clusterBkg":"#f6f8fa","clusterBorder":"#d0d7de","edgeLabelBackground":"#ffffff","fontSize":"13px","arrowheadColor":"#57606a","titleColor":"#1f2328","nodeTextColor":"#1f2328","textColor":"#1f2328"},"flowchart":{"htmlLabels":true,"useMaxWidth":true,"diagramPadding":24,"nodeSpacing":45,"rankSpacing":55}}}%%
+flowchart TB
+    A(["git push to main"]) --> B["GitHub Actions on the<br/>self-hosted runner<br/>docker build · tag = git SHA"]
+    B --> D["kubectl apply<br/>the WorkerDeployment"]
+
+    subgraph CTRL["Handed off to the controller"]
+        F["Derive Build ID, create a<br/>Deployment for this version only"]
+        F --> H["Wait for its workers to poll"]
+        H --> K["Ramp to 10%, then 50%,<br/>then promote to Current"]
+        K --> M["Sunset drained versions:<br/>scale to zero, then delete"]
+    end
+
+    D --> F
+
+    %% --- Light palette, in plain diagram syntax --------------------------
+    classDef box fill:#ffffff,stroke:#8c959f,stroke-width:1px,color:#1f2328
+    class A,B,D,F,H,K,M box
+    style CTRL fill:#f6f8fa,stroke:#d0d7de,color:#1f2328
+    linkStyle default stroke:#57606a,color:#1f2328
