@@ -1,13 +1,8 @@
 # Temporal Worker Versioning with the Worker Controller + GitHub Actions
 
-A small Temporal Python application showing the whole loop:
+A simple Temporal Python Wrokflow application demoing Temporal Worker Controller in action, integrated into CI/CD pipeline with Github Actions:
 
 > **push a workflow change → GitHub Actions builds an image and updates one Kubernetes resource → the [Temporal Worker Controller](https://github.com/temporalio/temporal-worker-controller) rolls out a new Worker Deployment Version in minikube → executions already running finish on the old version.**
-
-Rolling out new workflow code is not a normal rolling update: an execution that
-started on old code may need that old code for hours or weeks. Worker
-Versioning keeps both versions running and lets the server decide which one
-each execution belongs to. The controller is the piece that automates it.
 
 ## What CI actually does
 
@@ -96,9 +91,9 @@ rollout:
   strategy: Progressive
   steps:
     - rampPercentage: 10
-      pauseDuration: 60s
+      pauseDuration: 30s
     - rampPercentage: 50
-      pauseDuration: 60s
+      pauseDuration: 30s
 ```
 
 The controller only starts ramping once the new version's pods are ready and
