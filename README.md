@@ -6,10 +6,13 @@ A simple Temporal Python Wrokflow application demoing Temporal Worker Controller
 
 ## What CI actually does
 
+The CI pipeline is `.github/workflows/deploy-worker-version.yml`. During CI, the docker images are tagged with SHA of the commit. The SHA was generated when you ran `git commit`. Git builds a commit object by running a cryptographic hash function over a specific block of text. This allows us to quickly tag our Docker image with a concise commit ID. The `deploy.sh` script tags the docker image as:
+
 ```bash
-docker build -t worker-versioning-demo:$SHA worker/
-kubectl apply -f -   # WorkerDeployment, with the new image
+IMAGE_TAG="${1:-$(git -C "$REPO_ROOT" rev-parse --short=7 HEAD)}"
 ```
+
+This command outputs the unique 7-character abbreviated hash of the latest commit (HEAD) in your Git repository, as the image tag.
 
 That's it. Everything after that is the controller's job, driven by the
 `WorkerDeployment` resource:
