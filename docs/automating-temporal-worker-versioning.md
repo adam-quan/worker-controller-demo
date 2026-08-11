@@ -1,10 +1,6 @@
 # Automating Temporal Worker Versioning with GitHub Actions and the Worker Controller
 
-Deploying a web service is a solved problem. You build an image, roll the pods,
-drain the old ones, and within a minute the old code is gone and nobody
-notices.
-
-Deploying a Temporal Worker is not that. A workflow execution can run for
+A workflow execution can run for
 minutes, weeks, or months, and while it runs it is *bound to the code that
 started it*. Terminate the pods holding that code and you have not completed a
 deploy — you have orphaned every execution that was mid-flight.
@@ -17,25 +13,22 @@ two together. Every output below is from a demo that actually runs
 
 ---
 
+
+
 ## The moving parts
 
 Six things have to cooperate. Worth having the map before the details:
 
-<p align="center">
-  <img src="images/architecture.png"
-       alt="Architecture: GitHub repository and Actions workflow in the cloud; on your machine, a self-hosted runner and minikube. Inside minikube, the Temporal Worker Controller watches a WorkerDeployment resource and drives the Temporal server, which routes work to one set of worker pods per Build ID."
-       width="620">
-</p>
 
-<details>
-<summary>Diagram source (mermaid)</summary>
+
+Diagram source (mermaid)
 
 Rendered to PNG so the background stays white in both light and dark themes —
 mermaid's `background` theme variable styles labels and tooltips, not the
 canvas, so an inline block would go transparent and pick up the reader's theme.
 Theme and spacing are embedded in each `.mmd`, so the sources render the same
 in any mermaid tool. Regenerate after editing
-[`images/architecture.mmd`](images/architecture.mmd):
+`[images/architecture.mmd](images/architecture.mmd)`:
 
 ```bash
 npx -y @mermaid-js/mermaid-cli \
@@ -91,7 +84,9 @@ flowchart TB
     linkStyle default stroke:#57606a,color:#1f2328
 ```
 
-</details>
+
+
+
 
 Reading it as a chain of custody: **GitHub** holds the code and decides *when*
 to deploy. The **self-hosted runner** is the only component that can see both
@@ -110,7 +105,11 @@ pods to still exist.
 
 ---
 
+
+
 ## 1. Worker Versioning, and why you want it
+
+
 
 ### The problem it solves
 
@@ -123,9 +122,9 @@ diverge**, and you get a non-determinism error.
 Historically you had two options, both unpleasant:
 
 1. **Patch every change in code** (`workflow.patched(...)`), accumulating
-   branches you can never quite delete.
+  branches you can never quite delete.
 2. **Never change a running workflow's shape**, which in practice means
-   draining every execution before deploying — impossible if your workflows run
+  draining every execution before deploying — impossible if your workflows run
    for weeks.
 
 Worker Versioning gives you a third: **run the old and new code side by side,
@@ -177,14 +176,9 @@ long-running executions pick up fixes without waiting for them to finish.
 Those two settings, plus the server's Current/Ramping pointers, are the whole
 routing model:
 
-<p align="center">
-  <img src="images/routing.png"
-       alt="Routing model: a new execution goes to the Current version, or to the Ramping version for its configured share. An execution already running branches on its workflow's versioning behavior — PINNED stays on the version that started it until it completes, AUTO_UPGRADE moves to Current. Once nothing is pinned to it, the old version is drained and safe to delete."
-       width="680">
-</p>
 
-<details>
-<summary>Diagram source (mermaid) — <a href="images/routing.mmd">images/routing.mmd</a></summary>
+
+Diagram source (mermaid) — images/routing.mmd
 
 ```mermaid
 %%{init: {"theme":"base","themeVariables":{"background":"#ffffff","primaryColor":"#ffffff","primaryTextColor":"#1f2328","primaryBorderColor":"#8c959f","lineColor":"#57606a","secondaryColor":"#f6f8fa","tertiaryColor":"#ffffff","clusterBkg":"#f6f8fa","clusterBorder":"#d0d7de","edgeLabelBackground":"#ffffff","fontSize":"13px","arrowheadColor":"#57606a","titleColor":"#1f2328","nodeTextColor":"#1f2328","textColor":"#1f2328"},"flowchart":{"htmlLabels":true,"useMaxWidth":true,"diagramPadding":24,"nodeSpacing":45,"rankSpacing":55}}}%%
@@ -205,7 +199,9 @@ flowchart TD
     linkStyle default stroke:#57606a,color:#1f2328
 ```
 
-</details>
+
+
+
 
 The dashed edge is the part that makes automation possible: "drained" is a
 state the server reports, so something else can watch for it and clean up. That
@@ -231,16 +227,18 @@ started it — old greeting, old build — even though it is no longer Current:
 That is the whole value proposition:
 
 - **Deploy incompatible workflow changes safely.** No `patched()` branches
-  accumulating in your codebase for changes that only ever needed to apply to
-  new executions.
+accumulating in your codebase for changes that only ever needed to apply to
+new executions.
 - **No non-determinism errors from deploys.** In-flight executions never see
-  code they did not start with.
+code they did not start with.
 - **Canaries for workflows.** Send 10% of new executions to a new version and
-  watch before committing.
+watch before committing.
 - **Rollback is a routing change**, not a redeploy — the old version is still
-  running.
+running.
 
 ---
+
+
 
 ## 2. The Worker Controller, and why you want it
 
@@ -251,7 +249,7 @@ the list of things they had to do kept growing:
 
 - build the image and tag it with a Build ID
 - create a **new** Kubernetes Deployment per version (never a rolling update —
-  that would kill the workers pinned executions still need)
+that would kill the workers pinned executions still need)
 - wait for those pods to actually poll before routing anything to them
 - ramp traffic through 5% → 25% → 50%, pausing at each step
 - health-check between steps and roll back on failure
@@ -262,11 +260,11 @@ That was roughly 350 lines of bash, and it was subtly wrong in places. Two
 examples that only surfaced through testing:
 
 - `set-ramping-version --delete --build-id X` does **not** clear the ramp. It
-  zeroes X's percentage but leaves X installed as the ramping version — and in
-  that state the version never reports `drained`, so my cleanup script would
-  have kept its pods forever. You have to delete *without* `--build-id`.
+zeroes X's percentage but leaves X installed as the ramping version — and in
+that state the version never reports `drained`, so my cleanup script would
+have kept its pods forever. You have to delete *without* `--build-id`.
 - On a brand-new deployment there is no Current version to ramp *against*, so
-  the first rollout has to skip ramping entirely or it errors.
+the first rollout has to skip ramping entirely or it errors.
 
 This is exactly the class of problem an operator should own. The **Temporal
 Worker Controller** is Temporal's official Kubernetes controller for it. You
@@ -310,23 +308,27 @@ spec:
 Everything my scripts did is now in that one object. The controller:
 
 - **Derives the Build ID for you**, from the image reference plus a hash of the
-  pod template — producing IDs like `v2-ddb6`. Note the implication: changing
-  *any* pod-template field (an env var, a resource limit) is a new version, not
-  just a new image.
+pod template — producing IDs like `v2-ddb6`. Note the implication: changing
+*any* pod-template field (an env var, a resource limit) is a new version, not
+just a new image.
 - **Injects the worker's identity.** `TEMPORAL_ADDRESS`,
-  `TEMPORAL_NAMESPACE`, `TEMPORAL_DEPLOYMENT_NAME` and
-  `TEMPORAL_WORKER_BUILD_ID` are set on every container it creates. Your worker
-  reads them; it never computes them. (Set them yourself and you will register
-  a version the controller is not routing to — a genuinely confusing failure.)
+`TEMPORAL_NAMESPACE`, `TEMPORAL_DEPLOYMENT_NAME` and
+`TEMPORAL_WORKER_BUILD_ID` are set on every container it creates. Your worker
+reads them; it never computes them. (Set them yourself and you will register
+a version the controller is not routing to — a genuinely confusing failure.)
 - **Creates one Deployment per version** and leaves older ones alone.
 - **Ramps and promotes** according to `rollout`.
 - **Sunsets drained versions** according to `sunset` — scaling to zero and
-  deleting once Temporal reports no execution is pinned to them any more. The
-  garbage collection I had written by hand is a two-field policy.
+deleting once Temporal reports no execution is pinned to them any more. The
+garbage collection I had written by hand is a two-field policy.
 
 ---
 
+
+
 ## 3. GitHub Actions, and the self-hosted runner
+
+
 
 ### How Actions works, briefly
 
@@ -405,6 +407,8 @@ not of the architecture.
 
 ---
 
+
+
 ## 4. Putting it together: the pipeline
 
 Here is the entire deployment step:
@@ -418,14 +422,9 @@ That is genuinely all the pipeline does. The image tag is the Git SHA, so
 "what code is version `v2-ddb6` running?" is answerable with `git show`.
 Everything else belongs to the controller:
 
-<p align="center">
-  <img src="images/pipeline.png"
-       alt="Pipeline: a push to main triggers GitHub Actions on the self-hosted runner, which builds the image and applies the WorkerDeployment. The controller then derives a Build ID, creates a Deployment, and waits for its workers to poll; traffic then ramps to 10% then 50%, the version is promoted to Current, and drained versions are sunset."
-       width="380">
-</p>
 
-<details>
-<summary>Diagram source (mermaid) — <a href="images/pipeline.mmd">images/pipeline.mmd</a></summary>
+
+Diagram source (mermaid) — images/pipeline.mmd
 
 ```mermaid
 %%{init: {"theme":"base","themeVariables":{"background":"#ffffff","primaryColor":"#ffffff","primaryTextColor":"#1f2328","primaryBorderColor":"#8c959f","lineColor":"#57606a","secondaryColor":"#f6f8fa","tertiaryColor":"#ffffff","clusterBkg":"#f6f8fa","clusterBorder":"#d0d7de","edgeLabelBackground":"#ffffff","fontSize":"13px","arrowheadColor":"#57606a","titleColor":"#1f2328","nodeTextColor":"#1f2328","textColor":"#1f2328"},"flowchart":{"htmlLabels":true,"useMaxWidth":true,"diagramPadding":24,"nodeSpacing":45,"rankSpacing":55}}}%%
@@ -449,7 +448,9 @@ flowchart TB
     linkStyle default stroke:#57606a,color:#1f2328
 ```
 
-</details>
+
+
+
 
 The division of labour is the point. CI does what CI is good at — turning a
 commit into an artifact and recording intent. The controller does what a
@@ -477,24 +478,25 @@ gone — drained, scaled to zero, deleted, because `spec.sunset` said so.
 A few practical notes from getting this working, since they are the kind of
 thing that costs an afternoon:
 
-- **`kubectl wait --for=condition=Ready` is a trap on this resource.** After
-  you apply a new image, the CR still carries `Ready=True` from the *previous*
-  rollout, so the wait returns instantly and CI reports success before anything
-  has happened. Poll until `status.targetVersion.buildID ==
-  status.currentVersion.buildID` instead.
-- **Deleting a `WorkerDeployment` is not instant.** A
-  `temporal.io/delete-protection` finalizer holds it while the controller
-  removes versions from the Temporal server, and a version cannot be removed
-  while it still has *active pollers*. Expect `Terminating` for several minutes
-  after the pods stop. Scaling the versioned Deployments to zero first speeds
-  it up considerably.
+- `kubectl wait --for=condition=Ready` **is a trap on this resource.** After
+you apply a new image, the CR still carries `Ready=True` from the *previous*
+rollout, so the wait returns instantly and CI reports success before anything
+has happened. Poll until `status.targetVersion.buildID == status.currentVersion.buildID` instead.
+- **Deleting a** `WorkerDeployment` **is not instant.** A
+`temporal.io/delete-protection` finalizer holds it while the controller
+removes versions from the Temporal server, and a version cannot be removed
+while it still has *active pollers*. Expect `Terminating` for several minutes
+after the pods stop. Scaling the versioned Deployments to zero first speeds
+it up considerably.
 - **The rollout policy belongs in the manifest, not the pipeline.** Ramp steps
-  and pause durations live in the `WorkerDeployment`, which means changing how
-  you deploy is a reviewable diff rather than an edit to CI YAML.
+and pause durations live in the `WorkerDeployment`, which means changing how
+you deploy is a reviewable diff rather than an edit to CI YAML.
 - **Prerequisites are real**: Temporal Server 1.29.1+, and cert-manager for the
-  controller's webhook TLS.
+controller's webhook TLS.
 
 ---
+
+
 
 ## 5. Summary
 
@@ -502,27 +504,29 @@ Workflow code is not stateless service code. An execution outlives the deploy
 that started it, and pretending otherwise produces non-determinism errors and
 orphaned work. Three pieces solve it cleanly, each doing one job:
 
-| Layer | Responsibility |
-|---|---|
+
+| Layer                 | Responsibility                                                                                                                                                                                     |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Worker Versioning** | Runs multiple code versions side by side and routes each execution to the version that owns it. `PINNED` workflows finish where they started; `AUTO_UPGRADE` workflows follow the Current version. |
-| **Worker Controller** | Turns that into declarative Kubernetes. Derives Build IDs, creates a Deployment per version, ramps traffic, promotes, and garbage-collects drained versions. |
-| **GitHub Actions** | Turns a commit into an image and records intent by updating one field. A self-hosted runner is only needed when the cluster is not publicly reachable. |
+| **Worker Controller** | Turns that into declarative Kubernetes. Derives Build IDs, creates a Deployment per version, ramps traffic, promotes, and garbage-collects drained versions.                                       |
+| **GitHub Actions**    | Turns a commit into an image and records intent by updating one field. A self-hosted runner is only needed when the cluster is not publicly reachable.                                             |
+
 
 What I would take away from building it twice — once by hand, once with the
 controller:
 
 1. **The hard part is not ramping traffic, it is knowing when to stop.**
-   Draining, sunsetting and rollback are where bespoke scripts get subtly
+  Draining, sunsetting and rollback are where bespoke scripts get subtly
    wrong. Those are exactly the parts a control loop should own.
 2. **Keep policy declarative.** When ramp steps and pause durations live in a
-   manifest, your deployment strategy gets code review, history, and rollback
+  manifest, your deployment strategy gets code review, history, and rollback
    for free.
 3. **Validate before you ramp.** This demo shifts traffic as soon as the new
-   pods are healthy, which only proves the process started. The controller can
+  pods are healthy, which only proves the process started. The controller can
    also run a gate workflow pinned to the candidate Build ID and refuse to ramp
    until it passes — worth adding before you trust this in production.
 4. **Pin by default.** `PINNED` costs you some old pods for a while and buys
-   the freedom to change workflow code without thinking about replay. That is
+  the freedom to change workflow code without thinking about replay. That is
    almost always the right trade.
 
 The end state is a pipeline whose deploy step is two commands, and a rollout

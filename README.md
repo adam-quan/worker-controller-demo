@@ -164,7 +164,7 @@ cd worker && python3 starter.py greeting Alice
 GREETING = "Howdy"   # was "Hello"
 ```
 
-**3. Ship it.**
+**3. Ship it, which will trigger the github action to run.**
 
 ```bash
 git commit -am "change greeting" && git push
